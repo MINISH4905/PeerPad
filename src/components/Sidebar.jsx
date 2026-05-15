@@ -1,6 +1,5 @@
 import { Home, Users, Sparkles, Settings, Plus, HelpCircle, Archive, Info } from 'lucide-react';
 import classNames from 'classnames';
-import './Sidebar.css';
 
 const Sidebar = ({ currentPage, onNavigate, onCreateNote }) => {
   const navItems = [

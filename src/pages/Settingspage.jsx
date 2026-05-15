@@ -1,6 +1,6 @@
-import { useState } from 'react';
-import { User, Bell, Shield, Palette, Globe, Key, Trash2, ChevronRight, Moon, Sun } from 'lucide-react';
-import './SettingsPage.css';
+import { useState, useEffect } from 'react';
+import { User, Bell, Palette, Key, Trash2, ChevronRight, Moon, Sun, Check, LogOut } from 'lucide-react';
+import { useAuth } from '../context/AuthContext';
 
 const Toggle = ({ value, onChange }) => (
   <button
@@ -12,12 +12,44 @@ const Toggle = ({ value, onChange }) => (
 );
 
 const SettingsPage = () => {
-  const [darkMode, setDarkMode] = useState(false);
-  const [notifications, setNotifications] = useState(true);
-  const [emailUpdates, setEmailUpdates] = useState(true);
-  const [aiSuggestions, setAiSuggestions] = useState(true);
-  const [autoSave, setAutoSave] = useState(true);
-  const [language, setLanguage] = useState('English');
+  const { user, updateSettings, deleteAccount, logout } = useAuth();
+  
+  const [settings, setSettings] = useState(user?.settings || {
+    darkMode: false,
+    notifications: true,
+    emailUpdates: true,
+    aiSuggestions: true,
+    autoSave: true,
+    language: 'English'
+  });
+
+  const [saveStatus, setSaveStatus] = useState('idle');
+
+  useEffect(() => {
+    if (user?.settings) {
+      setSettings(user.settings);
+    }
+  }, [user]);
+
+  const handleUpdate = async (key, value) => {
+    const newSettings = { ...settings, [key]: value };
+    setSettings(newSettings);
+    setSaveStatus('saving');
+    
+    const success = await updateSettings(newSettings);
+    if (success) {
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    } else {
+      setSaveStatus('error');
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (window.confirm('Are you absolutely sure? This will delete all your notes and account data forever.')) {
+      await deleteAccount();
+    }
+  };
 
   const sections = [
     {
@@ -26,7 +58,7 @@ const SettingsPage = () => {
       items: [
         {
           label: 'Profile',
-          desc: 'Name, email, avatar',
+          desc: user?.email || 'Name, email, avatar',
           action: <ChevronRight size={16} className="settings-chevron" />,
         },
         {
@@ -35,9 +67,13 @@ const SettingsPage = () => {
           action: <ChevronRight size={16} className="settings-chevron" />,
         },
         {
-          label: 'Connected Accounts',
-          desc: 'Google, GitHub, etc.',
-          action: <ChevronRight size={16} className="settings-chevron" />,
+          label: 'Logout',
+          desc: 'Sign out of your account',
+          action: (
+            <button className="settings-logout-btn" onClick={logout}>
+              <LogOut size={16} /> Logout
+            </button>
+          ),
         },
       ],
     },
@@ -48,12 +84,12 @@ const SettingsPage = () => {
         {
           label: 'Push Notifications',
           desc: 'Team updates and mentions',
-          action: <Toggle value={notifications} onChange={setNotifications} />,
+          action: <Toggle value={settings.notifications} onChange={(val) => handleUpdate('notifications', val)} />,
         },
         {
           label: 'Email Updates',
           desc: 'Weekly summaries and invites',
-          action: <Toggle value={emailUpdates} onChange={setEmailUpdates} />,
+          action: <Toggle value={settings.emailUpdates} onChange={(val) => handleUpdate('emailUpdates', val)} />,
         },
       ],
     },
@@ -67,7 +103,7 @@ const SettingsPage = () => {
           action: (
             <div className="settings-dark-toggle">
               <Sun size={14} />
-              <Toggle value={darkMode} onChange={setDarkMode} />
+              <Toggle value={settings.darkMode} onChange={(val) => handleUpdate('darkMode', val)} />
               <Moon size={14} />
             </div>
           ),
@@ -78,8 +114,8 @@ const SettingsPage = () => {
           action: (
             <select
               className="settings-select"
-              value={language}
-              onChange={e => setLanguage(e.target.value)}
+              value={settings.language}
+              onChange={e => handleUpdate('language', e.target.value)}
             >
               <option>English</option>
               <option>Tamil</option>
@@ -98,49 +134,12 @@ const SettingsPage = () => {
         {
           label: 'AI Suggestions',
           desc: 'Smart note summaries and insights',
-          action: <Toggle value={aiSuggestions} onChange={setAiSuggestions} />,
+          action: <Toggle value={settings.aiSuggestions} onChange={(val) => handleUpdate('aiSuggestions', val)} />,
         },
         {
           label: 'Auto-Save',
           desc: 'Automatically save notes as you type',
-          action: <Toggle value={autoSave} onChange={setAutoSave} />,
-        },
-      ],
-    },
-    {
-      title: 'Privacy & Security',
-      icon: Shield,
-      items: [
-        {
-          label: 'Privacy Settings',
-          desc: 'Manage data and sharing',
-          action: <ChevronRight size={16} className="settings-chevron" />,
-        },
-        {
-          label: 'Two-Factor Authentication',
-          desc: 'Add an extra layer of security',
-          action: <ChevronRight size={16} className="settings-chevron" />,
-        },
-        {
-          label: 'Sessions',
-          desc: 'Manage active sessions',
-          action: <ChevronRight size={16} className="settings-chevron" />,
-        },
-      ],
-    },
-    {
-      title: 'Data',
-      icon: Globe,
-      items: [
-        {
-          label: 'Export Notes',
-          desc: 'Download all your notes as PDF or ZIP',
-          action: <ChevronRight size={16} className="settings-chevron" />,
-        },
-        {
-          label: 'Import',
-          desc: 'Import from Notion, Evernote, etc.',
-          action: <ChevronRight size={16} className="settings-chevron" />,
+          action: <Toggle value={settings.autoSave} onChange={(val) => handleUpdate('autoSave', val)} />,
         },
       ],
     },
@@ -149,8 +148,17 @@ const SettingsPage = () => {
   return (
     <div className="settings-page">
       <div className="settings-header">
-        <h1 className="settings-title">Settings</h1>
-        <p className="settings-sub">Manage your account, preferences, and app behaviour.</p>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <div>
+            <h1 className="settings-title">Settings</h1>
+            <p className="settings-sub">Manage your account and app behavior.</p>
+          </div>
+          {saveStatus !== 'idle' && (
+            <div className={`settings-save-status ${saveStatus}`}>
+              {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? <Check size={14} /> : 'Error'}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="settings-content">
@@ -174,7 +182,6 @@ const SettingsPage = () => {
           </div>
         ))}
 
-        {/* Danger zone */}
         <div className="settings-section settings-danger-section">
           <div className="settings-section-header">
             <Trash2 size={16} style={{ color: '#ef4444' }} />
@@ -184,9 +191,9 @@ const SettingsPage = () => {
             <div className="settings-row">
               <div className="settings-row-text">
                 <span className="settings-row-label">Delete Account</span>
-                <span className="settings-row-desc">Permanently delete your account and all data. This cannot be undone.</span>
+                <span className="settings-row-desc">Permanently delete your account and all data.</span>
               </div>
-              <button className="settings-danger-btn">Delete Account</button>
+              <button className="settings-danger-btn" onClick={handleDeleteAccount}>Delete Account</button>
             </div>
           </div>
         </div>

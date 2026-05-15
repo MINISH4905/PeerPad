@@ -1,11 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
 import {
   UserPlus, MoreVertical, FileText, Activity, Plus, X,
   Copy, Check, PenTool, Users, ArrowLeft, ChevronRight,
-  Trash2, LogOut, Upload, Mic, Sparkles, StopCircle,
+  Trash2, LogOut, Upload,
   Tag, Settings
 } from 'lucide-react';
-import './TeamNotes.css';
 
 /* ── helpers ── */
 const timeAgo = (date) => {
@@ -69,7 +69,8 @@ const TeamNoteCard = ({ note, onOpen, onDelete }) => {
 
   const handleConfirm = () => {
     setDeleting(true);
-    setTimeout(() => onDelete(note.id), 280);
+    const idToDelete = note.id || note._id;
+    setTimeout(() => onDelete(idToDelete), 280);
   };
 
   return (
@@ -118,8 +119,11 @@ const TeamNoteCard = ({ note, onOpen, onDelete }) => {
         )}
 
         <div className="tnc-footer">
-          <img src="https://i.pravatar.cc/150?u=user" className="tnc-avatar" alt="" />
-          <span className="tnc-time">{timeAgo(note.timestamp)}</span>
+          <div className="tnc-avatar-initial" title={note.owner_name || 'User'}>
+            {(note.owner_name || 'U').charAt(0).toUpperCase()}
+          </div>
+          <span className="tnc-owner-name">{note.owner_name || 'Unknown'}</span>
+          <span className="tnc-time">{timeAgo(note.timestamp || note.created_at)}</span>
         </div>
       </div>
     </>
@@ -130,10 +134,11 @@ const TeamNoteCard = ({ note, onOpen, onDelete }) => {
 const CreateTeamModal = ({ onClose, onCreate }) => {
   const [name, setName] = useState('');
   const [subjects, setSubjects] = useState(['', '', '']);
+  const [invites, setInvites] = useState('');
 
-  const updateSubject = (i, val) => {
+  const updateSubject = (idx, val) => {
     const next = [...subjects];
-    next[i] = val;
+    next[idx] = val;
     setSubjects(next);
   };
 
@@ -144,6 +149,7 @@ const CreateTeamModal = ({ onClose, onCreate }) => {
     onCreate({
       name: name.trim(),
       subjects: validSubjects.length > 0 ? validSubjects : ['GENERAL'],
+      members: invites.split(',').map(m => m.trim()).filter(Boolean)
     });
     onClose();
   };
@@ -156,35 +162,50 @@ const CreateTeamModal = ({ onClose, onCreate }) => {
           <button className="tn-modal-close" onClick={onClose}><X size={20} /></button>
         </div>
         <p className="tn-modal-sub">Start a shared workspace for your study group or class.</p>
+        
         <form onSubmit={submit} className="tn-modal-form">
-          <label className="tn-modal-label">Team Name *</label>
-          <input
-            className="tn-modal-input"
-            placeholder="e.g. Anatomy Study Group"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            autoFocus
-            required
-            style={{ marginBottom: 16 }}
-          />
-
-          <label className="tn-modal-label">
-            Subjects / Topics <span style={{ fontWeight: 400, textTransform: 'none', fontSize: 11, color: '#9ca3af' }}>(up to 3, at least 1)</span>
-          </label>
-          {subjects.map((s, i) => (
+          <div className="tn-form-group">
+            <label className="tn-modal-label">Team Name *</label>
             <input
-              key={i}
               className="tn-modal-input"
-              placeholder={`Subject ${i + 1}${i === 0 ? ' (required)' : ' (optional)'}`}
-              value={s}
-              onChange={e => updateSubject(i, e.target.value)}
-              required={i === 0}
-              style={{ marginBottom: i < 2 ? 8 : 0 }}
+              placeholder="e.g. Anatomy Study Group"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              autoFocus
+              required
             />
-          ))}
+          </div>
 
-          <button type="submit" className="btn btn-primary tn-modal-submit">
-            <Plus size={16} /> Create Team
+          <div className="tn-form-group">
+            <label className="tn-modal-label">
+              Subjects / Topics <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(up to 3)</span>
+            </label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {subjects.map((s, i) => (
+                <input
+                  key={i}
+                  className="tn-modal-input"
+                  placeholder={`Subject ${i + 1}${i === 0 ? ' (required)' : ' (optional)'}`}
+                  value={s}
+                  onChange={e => updateSubject(i, e.target.value)}
+                  required={i === 0}
+                />
+              ))}
+            </div>
+          </div>
+
+          <div className="tn-form-group">
+            <label className="tn-modal-label">Invite Members</label>
+            <input
+              className="tn-modal-input"
+              placeholder="Emails or Usernames (comma separated)"
+              value={invites}
+              onChange={e => setInvites(e.target.value)}
+            />
+          </div>
+
+          <button type="submit" className="btn tn-modal-submit">
+            <Plus size={18} /> Create Team
           </button>
         </form>
       </div>
@@ -273,6 +294,7 @@ const InviteModal = ({ team, onClose }) => {
   const [email, setEmail] = useState('');
   const [sent, setSent] = useState([]);
   const [copied, setCopied] = useState(false);
+  const [isSending, setIsSending] = useState(false);
   const link = generateLink(team.id);
 
   const handleCopy = () => {
@@ -281,11 +303,27 @@ const InviteModal = ({ team, onClose }) => {
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleSend = (e) => {
+  const handleSend = async (e) => {
     e.preventDefault();
-    if (!email.trim()) return;
-    setSent(prev => [...prev, email.trim()]);
-    setEmail('');
+    const emailToInvite = email.trim();
+    if (!emailToInvite || isSending) return;
+    
+    setIsSending(true);
+    try {
+      const response = await fetch(`/api/teams/${team.id}/invite`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailToInvite })
+      });
+      if (response.ok) {
+        setSent(prev => [...prev, emailToInvite]);
+        setEmail('');
+      }
+    } catch (err) {
+      console.error('Invite failed:', err);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   return (
@@ -318,8 +356,13 @@ const InviteModal = ({ team, onClose }) => {
               onChange={e => setEmail(e.target.value)}
               autoFocus
             />
-            <button type="submit" className="btn btn-primary" style={{ borderRadius: 999, padding: '10px 18px', whiteSpace: 'nowrap', flexShrink: 0 }}>
-              Send
+            <button 
+              type="submit" 
+              className="btn btn-primary" 
+              style={{ borderRadius: 999, padding: '10px 24px', whiteSpace: 'nowrap', flexShrink: 0 }}
+              disabled={isSending}
+            >
+              {isSending ? 'Sending...' : 'Send Invite'}
             </button>
           </div>
         </form>
@@ -390,175 +433,7 @@ const CollaboratorsPresence = ({ team }) => {
   );
 };
 
-/* ── PDF Summary mini-modal ── */
-const TeamPDFSummary = ({ team, subjects, onSave, onClose }) => {
-  const [file, setFile] = useState(null);
-  const [status, setStatus] = useState('idle');
-  const [summary, setSummary] = useState('');
-  const [selectedSubject, setSelectedSubject] = useState(subjects[0] || 'GENERAL');
-  const fileRef = useRef(null);
 
-  const handleFile = (f) => {
-    if (!f || f.type !== 'application/pdf') return;
-    setFile(f);
-    setStatus('loading');
-    setTimeout(() => {
-      setSummary(`AI Summary of "${f.name}":\n\nThis document covers key academic concepts related to ${selectedSubject}. The main themes include foundational theory, practical applications, and critical analysis frameworks.\n\nKey Points:\n• Core principles and definitions introduced in Chapter 1\n• Experimental methodologies and research design\n• Statistical analysis and interpretation of results\n• Real-world applications and case studies\n• Summary of conclusions and future directions`);
-      setStatus('done');
-    }, 2500);
-  };
-
-  const handleSave = () => {
-    onSave({
-      title: `PDF Summary: ${file?.name || 'Document'}`,
-      content: summary,
-      type: 'text',
-      subject: selectedSubject,
-      tag: team.name.toUpperCase(),
-      teamId: team.id,
-    });
-    onClose();
-  };
-
-  return (
-    <div className="tn-modal-overlay" onClick={onClose}>
-      <div className="tn-modal-box" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
-        <div className="tn-modal-header">
-          <h2 className="tn-modal-title">PDF Summary</h2>
-          <button className="tn-modal-close" onClick={onClose}><X size={20} /></button>
-        </div>
-        <p className="tn-modal-sub">Upload a PDF and save the AI summary to your team workspace.</p>
-
-        <label className="tn-modal-label">Subject</label>
-        <select className="tn-modal-select" value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)}>
-          {subjects.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-
-        {status === 'idle' && (
-          <>
-            <input ref={fileRef} type="file" accept=".pdf" style={{ display: 'none' }} onChange={e => handleFile(e.target.files[0])} />
-            <button className="tn-upload-zone" onClick={() => fileRef.current?.click()}>
-              <Upload size={24} />
-              <span>Click to upload PDF</span>
-              <span style={{ fontSize: 12, color: '#9ca3af' }}>Saved to team workspace for all members</span>
-            </button>
-          </>
-        )}
-
-        {status === 'loading' && (
-          <div className="tn-loading-state">
-            <div className="tn-spinner" />
-            <p>Analyzing document...</p>
-          </div>
-        )}
-
-        {status === 'done' && (
-          <div className="tn-summary-result">
-            <div className="tn-summary-text" style={{ whiteSpace: 'pre-line' }}>{summary}</div>
-            <div className="tn-modal-actions" style={{ marginTop: 16 }}>
-              <button className="btn btn-secondary" onClick={onClose}>Discard</button>
-              <button className="btn btn-primary" onClick={handleSave}>
-                <Sparkles size={14} /> Save to Team
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-/* ── Voice Transcribe mini-modal ── */
-const TeamVoiceTranscribe = ({ team, subjects, onSave, onClose }) => {
-  const [isRecording, setIsRecording] = useState(false);
-  const [transcript, setTranscript] = useState('');
-  const [selectedSubject, setSelectedSubject] = useState(subjects[0] || 'GENERAL');
-  const [supported] = useState('SpeechRecognition' in window || 'webkitSpeechRecognition' in window);
-  const recognitionRef = useRef(null);
-
-  const startRecording = () => {
-    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    recognitionRef.current = new SR();
-    recognitionRef.current.continuous = true;
-    recognitionRef.current.interimResults = true;
-    recognitionRef.current.onresult = (e) => {
-      let full = '';
-      for (let i = 0; i < e.results.length; i++) full += e.results[i][0].transcript;
-      setTranscript(full);
-    };
-    recognitionRef.current.onend = () => setIsRecording(false);
-    recognitionRef.current.start();
-    setIsRecording(true);
-    setTranscript('');
-  };
-
-  const stopRecording = () => {
-    recognitionRef.current?.stop();
-    setIsRecording(false);
-  };
-
-  const handleSave = () => {
-    if (!transcript.trim()) return;
-    onSave({
-      title: `Voice Note — ${new Date().toLocaleDateString()}`,
-      content: transcript,
-      type: 'text',
-      subject: selectedSubject,
-      tag: team.name.toUpperCase(),
-      teamId: team.id,
-    });
-    onClose();
-  };
-
-  return (
-    <div className="tn-modal-overlay" onClick={onClose}>
-      <div className="tn-modal-box" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
-        <div className="tn-modal-header">
-          <h2 className="tn-modal-title">Voice Transcribe</h2>
-          <button className="tn-modal-close" onClick={onClose}><X size={20} /></button>
-        </div>
-        <p className="tn-modal-sub">Record and transcribe directly into your team workspace.</p>
-
-        <label className="tn-modal-label">Subject</label>
-        <select className="tn-modal-select" value={selectedSubject} onChange={e => setSelectedSubject(e.target.value)}>
-          {subjects.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>
-
-        {!supported && (
-          <div className="tn-warning-box">Speech recognition requires Chrome or Edge.</div>
-        )}
-
-        <div className="tn-voice-wave">
-          {Array.from({ length: 16 }).map((_, i) => (
-            <div key={i} className={`tn-wave-bar ${isRecording ? 'active' : ''}`} style={{ animationDelay: `${i * 0.07}s` }} />
-          ))}
-        </div>
-
-        <button
-          className={`btn ${isRecording ? 'tn-stop-btn' : 'btn-primary'} tn-record-btn`}
-          onClick={isRecording ? stopRecording : startRecording}
-          disabled={!supported}
-        >
-          {isRecording ? <><StopCircle size={16} /> Stop Recording</> : <><Mic size={16} /> Start Recording</>}
-        </button>
-
-        {transcript && (
-          <div className="tn-transcript-box">
-            <div className="tn-modal-label" style={{ marginBottom: 6 }}>Transcript</div>
-            <div className="tn-transcript-text">{transcript}</div>
-          </div>
-        )}
-
-        {transcript && (
-          <div className="tn-modal-actions" style={{ marginTop: 12 }}>
-            <button className="btn btn-secondary" onClick={onClose}>Discard</button>
-            <button className="btn btn-primary" onClick={handleSave}>Save to Team</button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
 
 /* ── FAB ── */
 const TeamFAB = ({ onAction }) => {
@@ -590,12 +465,6 @@ const TeamFAB = ({ onAction }) => {
           <button className="fab-option" onClick={() => fileRef.current?.click()}>
             <Upload size={18} /><span>Upload Image</span>
           </button>
-          <button className="fab-option" onClick={() => { setOpen(false); onAction('pdf'); }}>
-            <Sparkles size={18} /><span>PDF Summary</span>
-          </button>
-          <button className="fab-option" onClick={() => { setOpen(false); onAction('voice'); }}>
-            <Mic size={18} /><span>Voice Note</span>
-          </button>
         </div>
       )}
       <button className={`fab-btn ${open ? 'fab-open' : ''}`} onClick={() => setOpen(p => !p)}>
@@ -624,7 +493,8 @@ const SubjectTabs = ({ subjects, active, onChange }) => (
 );
 
 /* ── Team List ── */
-const TeamListView = ({ teams, onSelect, onCreateTeam, onExitTeam }) => {
+const TeamListView = ({ teams, invites = [], onSelect, onCreateTeam, onExitTeam, onDeleteTeam }) => {
+  const { user } = useAuth();
   const [showCreate, setShowCreate] = useState(false);
   const [exitConfirm, setExitConfirm] = useState(null);
   const [showInviteFor, setShowInviteFor] = useState(null);
@@ -674,7 +544,6 @@ const TeamListView = ({ teams, onSelect, onCreateTeam, onExitTeam }) => {
         <div className="tn-teams-grid">
           {teams.map(team => (
             <div key={team.id} className="tn-team-card">
-              {/* Main clickable body */}
               <div className="tn-team-card-body" onClick={() => onSelect(team.id)}>
                 <div className="tn-team-card-top">
                   <span className="tn-badge">
@@ -684,53 +553,71 @@ const TeamListView = ({ teams, onSelect, onCreateTeam, onExitTeam }) => {
                   <ChevronRight size={16} style={{ color: '#9ca3af' }} />
                 </div>
                 <h3 className="tn-team-card-name">{team.name}</h3>
-                {team.subjects && team.subjects.length > 1 && (
-                  <div className="tn-team-card-subjects">
-                    {team.subjects.slice(1).map(s => (
-                      <span key={s} className="tn-subject-mini">{s}</span>
-                    ))}
-                  </div>
-                )}
                 <div className="tn-team-card-footer">
                   <div className="tn-avatars-row">
-                    {team.members.slice(0, 3).map(m => (
-                      <img key={m.id} src={m.avatar} alt={m.name} />
+                    {(team.members || []).slice(0, 3).map((m, i) => (
+                      <div key={i} className="tn-avatar-mini">{m.charAt(0)}</div>
                     ))}
-                    {team.members.length > 3 && (
-                      <div className="tn-avatar-overflow">+{team.members.length - 3}</div>
-                    )}
                   </div>
-                  <span className="tn-member-count">{team.members.length} member{team.members.length !== 1 ? 's' : ''}</span>
+                  <span className="tn-member-count">{(team.members || []).length} member{(team.members || []).length !== 1 ? 's' : ''}</span>
                 </div>
               </div>
-
-              {/* Action row: invite + exit */}
               <div className="tn-team-card-actions">
-                <button
-                  className="tn-card-action-btn"
-                  onClick={e => { e.stopPropagation(); setShowInviteFor(team); }}
-                  title="Invite member"
-                >
-                  <UserPlus size={14} />
-                  <span style={{ fontSize: 12, fontWeight: 600 }}>Invite</span>
+                <button className="tn-card-action-btn" onClick={e => { e.stopPropagation(); setShowInviteFor(team); }}>
+                  <UserPlus size={14} /> <span>Invite</span>
                 </button>
-                <button
-                  className="tn-card-action-btn tn-exit-btn"
-                  onClick={e => { e.stopPropagation(); setExitConfirm(team); }}
-                  title="Leave team"
+                <button 
+                  className="tn-card-action-btn tn-exit-btn" 
+                  onClick={e => { 
+                    e.stopPropagation(); 
+                    if (team.owner_id === 'ME' || team.owner_id === user?.id) { // owner check
+                       onDeleteTeam(team.id);
+                    } else {
+                       setExitConfirm(team);
+                    }
+                  }}
                 >
-                  <LogOut size={14} />
-                  <span style={{ fontSize: 12, fontWeight: 600 }}>Leave</span>
+                  {(team.owner_id === 'ME' || team.owner_id === user?.id) ? (
+                    <><Trash2 size={14} /> <span>Delete</span></>
+                  ) : (
+                    <><LogOut size={14} /> <span>Leave</span></>
+                  )}
                 </button>
               </div>
             </div>
           ))}
-
           <div className="tn-team-card-new" onClick={() => setShowCreate(true)}>
             <div className="tn-team-card-new-inner">
               <div className="tn-new-icon"><Plus size={22} /></div>
               <span>New Team</span>
             </div>
+          </div>
+        </div>
+      )}
+
+      {invites.length > 0 && (
+        <div className="tn-invites-section" style={{ marginTop: 40 }}>
+          <div className="tn-badge" style={{ background: '#fef3c7', color: '#92400e' }}>
+            <Activity size={11} style={{ marginRight: 6 }} />PENDING INVITES
+          </div>
+          <h2 className="tn-list-title" style={{ fontSize: 20, marginTop: 8 }}>Invitations Received</h2>
+          <div className="tn-teams-grid" style={{ marginTop: 20 }}>
+            {invites.map(invite => (
+              <div key={invite.id} className="tn-team-card tn-invite-card">
+                <div className="tn-team-card-body">
+                  <h3 className="tn-team-card-name">{invite.name}</h3>
+                  <p className="tn-list-sub" style={{ fontSize: 12, marginBottom: 16 }}>
+                    You've been invited to join this workspace.
+                  </p>
+                  <button 
+                    className="btn btn-primary w-full"
+                    onClick={() => window.location.pathname = `/join/${invite.id}`}
+                  >
+                    View Invitation
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}
@@ -743,8 +630,6 @@ const TeamWorkspaceView = ({ team, notes, onOpenNote, onBack, onDeleteNote, onEx
   const [showInvite, setShowInvite] = useState(false);
   const [showExitConfirm, setShowExitConfirm] = useState(false);
   const [activeSubject, setActiveSubject] = useState('all');
-  const [showPDF, setShowPDF] = useState(false);
-  const [showVoice, setShowVoice] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showManageSubjects, setShowManageSubjects] = useState(false);
   const moreRef = useRef(null);
@@ -786,8 +671,7 @@ const TeamWorkspaceView = ({ team, notes, onOpenNote, onBack, onDeleteNote, onEx
         subject: activeSubject !== 'all' ? activeSubject : subjects[0],
         timestamp: new Date(),
       });
-    } else if (type === 'pdf') setShowPDF(true);
-    else if (type === 'voice') setShowVoice(true);
+    }
   };
 
   const handleExitConfirm = () => {
@@ -807,22 +691,6 @@ const TeamWorkspaceView = ({ team, notes, onOpenNote, onBack, onDeleteNote, onEx
           team={team}
           onClose={() => setShowManageSubjects(false)}
           onUpdateTeam={onUpdateTeam}
-        />
-      )}
-      {showPDF && (
-        <TeamPDFSummary
-          team={team}
-          subjects={subjects}
-          onSave={(noteData) => onSaveNote({ ...noteData, timestamp: new Date() })}
-          onClose={() => setShowPDF(false)}
-        />
-      )}
-      {showVoice && (
-        <TeamVoiceTranscribe
-          team={team}
-          subjects={subjects}
-          onSave={(noteData) => onSaveNote({ ...noteData, timestamp: new Date() })}
-          onClose={() => setShowVoice(false)}
         />
       )}
 
@@ -848,12 +716,6 @@ const TeamWorkspaceView = ({ team, notes, onOpenNote, onBack, onDeleteNote, onEx
         </div>
 
         <div className="tn-workspace-header-right">
-          <button className="btn btn-secondary tn-pdf-btn" onClick={() => setShowPDF(true)}>
-            <Sparkles size={15} /> PDF Summary
-          </button>
-          <button className="btn btn-secondary tn-pdf-btn" onClick={() => setShowVoice(true)}>
-            <Mic size={15} /> Voice
-          </button>
           <button className="btn btn-primary" onClick={() => setShowInvite(true)}>
             <UserPlus size={16} /> Invite
           </button>
@@ -908,12 +770,6 @@ const TeamWorkspaceView = ({ team, notes, onOpenNote, onBack, onDeleteNote, onEx
             <button className="btn btn-secondary" onClick={() => handleCreateNote('drawing')}>
               <PenTool size={15} /> Drawing
             </button>
-            <button className="btn btn-secondary" onClick={() => setShowPDF(true)}>
-              <Sparkles size={15} /> PDF Summary
-            </button>
-            <button className="btn btn-secondary" onClick={() => setShowVoice(true)}>
-              <Mic size={15} /> Voice Note
-            </button>
           </div>
         </div>
       ) : (
@@ -940,16 +796,22 @@ const TeamWorkspaceView = ({ team, notes, onOpenNote, onBack, onDeleteNote, onEx
 };
 
 /* ── Root ── */
-const TeamNotes = ({ teams, activeTeamId, onSelectTeam, onCreateTeam, onOpenNote, onDeleteNote, teamNotes, onExitTeam, onSaveNote, onUpdateTeam }) => {
+const TeamNotes = ({ 
+  teams, invites, user, activeTeamId, onSelectTeam, onCreateTeam, 
+  onOpenNote, onDeleteNote, teamNotes, onExitTeam, onSaveNote, 
+  onUpdateTeam, onDeleteTeam 
+}) => {
   const activeTeam = teams.find(t => t.id === activeTeamId);
 
   if (!activeTeam) {
     return (
       <TeamListView
         teams={teams}
+        invites={invites}
         onSelect={onSelectTeam}
         onCreateTeam={onCreateTeam}
         onExitTeam={onExitTeam}
+        onDeleteTeam={onDeleteTeam}
       />
     );
   }
@@ -964,6 +826,7 @@ const TeamNotes = ({ teams, activeTeamId, onSelectTeam, onCreateTeam, onOpenNote
       onExitTeam={onExitTeam}
       onSaveNote={onSaveNote}
       onUpdateTeam={onUpdateTeam}
+      onDeleteTeam={onDeleteTeam}
     />
   );
 };

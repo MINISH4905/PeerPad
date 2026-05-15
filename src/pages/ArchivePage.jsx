@@ -1,5 +1,4 @@
 import { FileText, PenTool, RotateCcw, Trash2, Archive } from 'lucide-react';
-import './ArchivePage.css';
 
 const daysLeft = (expiresAt) => {
   const diff = Math.ceil((new Date(expiresAt) - Date.now()) / (1000 * 60 * 60 * 24));

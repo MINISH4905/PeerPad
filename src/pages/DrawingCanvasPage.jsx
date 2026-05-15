@@ -3,8 +3,7 @@ import {
   ArrowLeft, PenTool, Eraser, Undo, Redo,
   ZoomIn, ZoomOut, Share2, Save, Minus, Plus
 } from 'lucide-react';
-import { useSync } from '../context/SyncContext';
-import './DrawingCanvasPage.css';
+import { useSync } from '../hooks/useSync';
 
 const COLORS = [
   { value: '#000000', label: 'Black' },
@@ -66,8 +65,8 @@ const DrawingCanvasPage = ({ note, onBack }) => {
       setHistoryStep(newH.length - 1);
       return newH;
     });
-    dispatchEvent({ type: 'CANVAS_UPDATE', payload: { dataURL } });
-  }, [historyStep, dispatchEvent]);
+    dispatchEvent({ type: 'CANVAS_UPDATE', noteId: note.id, payload: { dataURL } });
+  }, [note.id, historyStep, dispatchEvent]);
 
   const getPos = (e) => {
     const canvas = canvasRef.current;

@@ -1,6 +1,5 @@
 import { useState, useRef } from 'react';
 import { Search, FileText, PenTool, Grid, List, Plus, X, Trash2, Image, Mail, UserPlus, Check } from 'lucide-react';
-import './Dashboard.css';
 
 const timeAgo = (date) => {
   const diff = Math.floor((Date.now() - new Date(date)) / 1000);
@@ -96,7 +95,8 @@ const NoteCard = ({ note, onOpen, onDelete, onUpdateCollaborators }) => {
   const handleConfirmDelete = () => {
     setDeleting(true);
     setShowDelete(false);
-    setTimeout(() => onDelete(note.id), 280);
+    const idToDelete = note.id || note._id;
+    setTimeout(() => onDelete(idToDelete), 280);
   };
 
   return (
@@ -171,7 +171,9 @@ const NoteCard = ({ note, onOpen, onDelete, onUpdateCollaborators }) => {
 
         <div className="card-footer">
           <div className="card-footer-left">
-            <img src="https://i.pravatar.cc/150?u=user" className="card-avatar" alt="" />
+            <div className="card-avatar-initial" title={note.owner_name || 'You'}>
+              {(note.owner_name || 'U').charAt(0).toUpperCase()}
+            </div>
             {note.collaborators && note.collaborators.length > 0 && (
               <span className="collab-count">{note.collaborators.length} collaborator{note.collaborators.length > 1 ? 's' : ''}</span>
             )}
@@ -184,15 +186,13 @@ const NoteCard = ({ note, onOpen, onDelete, onUpdateCollaborators }) => {
 };
 
 /* ── Dashboard ── */
-const Dashboard = ({ notes = [], onOpenNote, onDeleteNote }) => {
+const Dashboard = ({ notes = [], invites = [], user, onOpenNote, onDeleteNote }) => {
+  const [activeTab, setActiveTab] = useState('notes');
   const [searchQuery, setSearchQuery] = useState('');
   const [viewMode, setViewMode] = useState('grid');
   const [fabOpen, setFabOpen] = useState(false);
   const imageInputRef = useRef(null);
 
-  const [allNotes, setAllNotes] = useState(notes);
-
-  // Keep local copy synced with prop
   const displayNotes = notes;
 
   const filtered = displayNotes.filter(n =>
@@ -238,10 +238,18 @@ const Dashboard = ({ notes = [], onOpenNote, onDeleteNote }) => {
           )}
         </div>
         <div className="header-actions">
-          <button className="nav-tab active">Notes</button>
-          <button className="nav-tab">Collections</button>
-          <button className="nav-tab">Shared</button>
-          <img src="https://i.pravatar.cc/150?u=user" className="header-avatar" alt="User" />
+          <button className={`nav-tab ${activeTab === 'notes' ? 'active' : ''}`} onClick={() => setActiveTab('notes')}>Notes</button>
+          <button className={`nav-tab ${activeTab === 'collections' ? 'active' : ''}`} onClick={() => setActiveTab('collections')}>Collections</button>
+          <button className={`nav-tab ${activeTab === 'shared' ? 'active' : ''}`} onClick={() => setActiveTab('shared')}>
+            Shared
+            {invites.length > 0 && <span className="tab-count">{invites.length}</span>}
+          </button>
+          <div className="header-avatar-wrap">
+            <div className="header-avatar-initial" title={user?.name || 'User'}>
+              {(user?.name || 'U').charAt(0).toUpperCase()}
+            </div>
+            <span className="header-user-name">{user?.name || 'User'}</span>
+          </div>
         </div>
       </header>
 
@@ -275,35 +283,72 @@ const Dashboard = ({ notes = [], onOpenNote, onDeleteNote }) => {
         </div>
 
         <div className="entries-section">
-          <div className="entries-header">
-            <h2 className="entries-label">RECENT ENTRIES</h2>
-            <div className="view-toggles">
-              <button className={`view-toggle ${viewMode === 'grid' ? 'active' : ''}`} onClick={() => setViewMode('grid')}>
-                <Grid size={14} />
-              </button>
-              <button className={`view-toggle ${viewMode === 'list' ? 'active' : ''}`} onClick={() => setViewMode('list')}>
-                <List size={14} />
-              </button>
-            </div>
-          </div>
+          {activeTab === 'notes' ? (
+            <>
+              <div className="entries-header">
+                <h2 className="entries-label">RECENT ENTRIES</h2>
+                <div className="view-toggles">
+                  <button className={`view-toggle ${viewMode === 'grid' ? 'active' : ''}`} onClick={() => setViewMode('grid')}>
+                    <Grid size={14} />
+                  </button>
+                  <button className={`view-toggle ${viewMode === 'list' ? 'active' : ''}`} onClick={() => setViewMode('list')}>
+                    <List size={14} />
+                  </button>
+                </div>
+              </div>
 
-          {filtered.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon"><FileText size={28} /></div>
-              <p className="empty-title">No notes yet</p>
-              <p className="empty-sub">Create your first note using the + button or quick actions above.</p>
+              {filtered.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-icon"><FileText size={28} /></div>
+                  <p className="empty-title">No notes yet</p>
+                  <p className="empty-sub">Create your first note using the + button or quick actions above.</p>
+                </div>
+              ) : (
+                <div className={`entries-grid ${viewMode === 'list' ? 'entries-list' : ''}`}>
+                  {filtered.map(note => (
+                    <NoteCard
+                      key={note.id}
+                      note={note}
+                      onOpen={onOpenNote}
+                      onDelete={onDeleteNote}
+                      onUpdateCollaborators={handleUpdateCollaborators}
+                    />
+                  ))}
+                </div>
+              )}
+            </>
+          ) : activeTab === 'shared' ? (
+            <div className="shared-invites-section">
+              <h2 className="entries-label">TEAM INVITATIONS</h2>
+              {invites.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-icon"><Mail size={28} /></div>
+                  <p className="empty-title">No pending invites</p>
+                  <p className="empty-sub">Invitations from teammates will appear here.</p>
+                </div>
+              ) : (
+                <div className="invites-list">
+                  {invites.map(invite => (
+                    <div key={invite.id} className="invite-card-mini">
+                      <div className="invite-card-info">
+                        <h4 className="invite-card-name">{invite.name}</h4>
+                        <p className="invite-card-sub">You've been invited to join this team.</p>
+                      </div>
+                      <button 
+                        className="btn btn-primary btn-sm"
+                        onClick={() => window.location.pathname = `/join/${invite.id}`}
+                      >
+                        Join Team
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
-            <div className={`entries-grid ${viewMode === 'list' ? 'entries-list' : ''}`}>
-              {filtered.map(note => (
-                <NoteCard
-                  key={note.id}
-                  note={note}
-                  onOpen={onOpenNote}
-                  onDelete={onDeleteNote}
-                  onUpdateCollaborators={handleUpdateCollaborators}
-                />
-              ))}
+            <div className="empty-state">
+              <div className="empty-icon"><Grid size={28} /></div>
+              <p className="empty-title">{activeTab.toUpperCase()} coming soon</p>
             </div>
           )}
         </div>

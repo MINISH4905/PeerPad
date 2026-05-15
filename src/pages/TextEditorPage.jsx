@@ -3,41 +3,22 @@ import {
   ArrowLeft, Share2, MoreVertical, Bold, Italic,
   List, Link2, BookOpen, HelpCircle, PlayCircle,
   AlignLeft, AlignCenter, Underline, Image,
-  X, Check, Users
+  X, Check, Users, ArrowRight, Loader
 } from 'lucide-react';
-import { useSync } from '../context/SyncContext';
-import './TextEditorPage.css';
+import { useSocket } from '../hooks/useSocket';
+import { useSync } from '../hooks/useSync';
 
-/* ── AI suggestion via Claude API — subject-aware ── */
+/* ── AI suggestion via backend (Llama 3) ── */
 async function fetchAISuggestion(text, subject) {
   try {
-    const sentences = text.trim().split(/[.!?]+/).filter(s => s.trim().length > 3);
-    if (sentences.length < 1 || text.trim().length < 20) return '';
-    const lastSentence = sentences[sentences.length - 1].trim();
-    if (!lastSentence) return '';
-
-    const subjectContext = subject
-      ? `The note is about the academic subject: ${subject}. `
-      : '';
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
+    const response = await fetch('/api/ai/suggest', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 40,
-        messages: [{
-          role: 'user',
-          content: `You are an academic note-taking autocomplete assistant. ${subjectContext}Continue the following partial sentence naturally with 5-12 words. Return ONLY the continuation text, no punctuation at start, no quotes, no explanation.
-
-Partial text: "${lastSentence}"`
-        }]
-      })
+      body: JSON.stringify({ text, subject })
     });
     if (!response.ok) return '';
     const data = await response.json();
-    const suggestion = data.content?.[0]?.text?.trim() || '';
-    return suggestion.replace(/^["']|["']$/g, '').trim();
+    return data.suggestion || '';
   } catch {
     return '';
   }
@@ -123,6 +104,8 @@ const TextEditorPage = ({ note, onBack, teamSubject, teamSubjects = [] }) => {
   const [wordCount, setWordCount] = useState(0);
   const [aiSuggestion, setAiSuggestion] = useState('');
   const [showCollab, setShowCollab] = useState(false);
+  const [aiResult, setAiResult] = useState(null);
+  const [isAiLoading, setIsAiLoading] = useState(false);
   const [activeSubject, setActiveSubject] = useState(note?.subject || teamSubject || null);
   const saveTimer = useRef(null);
   const aiTimer = useRef(null);
@@ -142,6 +125,23 @@ const TextEditorPage = ({ note, onBack, teamSubject, teamSubjects = [] }) => {
     setWordCount(words);
   }, [content]);
 
+  const { on, off, emit } = useSocket();
+
+  useEffect(() => {
+    if (note?.id) {
+      emit('join_room', { noteId: note.id });
+      
+      const handleRemoteChange = (data) => {
+        if (data.content !== undefined) {
+          setContent(data.content);
+        }
+      };
+      
+      on('text_change', handleRemoteChange);
+      return () => off('text_change');
+    }
+  }, [note?.id, on, off, emit]);
+
   const handleContentChange = (e) => {
     const val = e.target.value;
     setContent(val);
@@ -151,7 +151,7 @@ const TextEditorPage = ({ note, onBack, teamSubject, teamSubjects = [] }) => {
     clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       setLastSaved(new Date());
-      dispatchEvent({ type: 'NOTE_EDIT', payload: { content: val } });
+      dispatchEvent({ type: 'NOTE_EDIT', payload: { noteId: note?.id, content: val } });
     }, 800);
 
     clearTimeout(aiTimer.current);
@@ -177,6 +177,27 @@ const TextEditorPage = ({ note, onBack, teamSubject, teamSubjects = [] }) => {
       setAiSuggestion('');
     }
     if (e.key === 'Escape') setAiSuggestion('');
+  };
+
+  const handleAIAction = async (action) => {
+    if (!content.trim()) return;
+    setIsAiLoading(true);
+    setAiResult(null);
+    try {
+      const endpoint = action === 'summarize' ? '/api/ai/text-summarize' : 
+                      action === 'explain' ? '/api/ai/explain' : '/api/ai/quiz';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: content })
+      });
+      const data = await res.json();
+      setAiResult({ type: action, content: data.description || data.explanation || data.quiz });
+    } catch (err) {
+      alert('AI assistant is currently unavailable.');
+    } finally {
+      setIsAiLoading(false);
+    }
   };
 
   const handleImageUpload = (e) => {
@@ -351,7 +372,18 @@ const TextEditorPage = ({ note, onBack, teamSubject, teamSubjects = [] }) => {
               <span className="sidebar-block-badge">1 ACTIVE</span>
             </div>
             <div className="sidebar-avatars" style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <img src="https://i.pravatar.cc/150?u=user" alt="You" title="You" style={{ width: 30, height: 30, borderRadius: '50%', objectFit: 'cover', border: '2px solid #fff', boxShadow: '0 0 0 1px var(--border-color)' }} />
+              <div
+                title="You"
+                style={{
+                  width: 30, height: 30, borderRadius: '50%',
+                  background: '#111', color: '#fff',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 13, fontWeight: 700, textTransform: 'uppercase',
+                  border: '2px solid #fff', boxShadow: '0 0 0 1px var(--border-color)'
+                }}
+              >
+                {(note?.owner_name || 'U').charAt(0)}
+              </div>
               <button
                 onClick={() => setShowCollab(true)}
                 style={{ width: 30, height: 30, borderRadius: '50%', border: '1.5px dashed var(--border-color)', background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-secondary)', transition: 'all 0.2s' }}
@@ -382,19 +414,38 @@ const TextEditorPage = ({ note, onBack, teamSubject, teamSubjects = [] }) => {
               </div>
             )}
             <div className="sidebar-ai-actions">
-              <button className="sidebar-ai-btn">
+              <button className="sidebar-ai-btn" onClick={() => handleAIAction('summarize')}>
                 <PlayCircle size={15} /><span>Summarize Note</span>
-                <ArrowLeft size={13} className="sidebar-ai-chevron" />
+                <ArrowRight size={13} className="sidebar-ai-chevron" />
               </button>
-              <button className="sidebar-ai-btn">
+              <button className="sidebar-ai-btn" onClick={() => handleAIAction('explain')}>
                 <BookOpen size={15} /><span>Explain Concept</span>
-                <ArrowLeft size={13} className="sidebar-ai-chevron" />
+                <ArrowRight size={13} className="sidebar-ai-chevron" />
               </button>
-              <button className="sidebar-ai-btn">
+              <button className="sidebar-ai-btn" onClick={() => handleAIAction('quiz')}>
                 <HelpCircle size={15} /><span>Generate Quiz</span>
-                <ArrowLeft size={13} className="sidebar-ai-chevron" />
+                <ArrowRight size={13} className="sidebar-ai-chevron" />
               </button>
             </div>
+
+            {isAiLoading && (
+              <div style={{ marginTop: 12, padding: 12, background: '#f9fafb', borderRadius: 12, textAlign: 'center' }}>
+                <Loader size={16} className="spin" />
+                <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 600 }}>Analyzing...</span>
+              </div>
+            )}
+
+            {aiResult && (
+              <div style={{ marginTop: 12, padding: 16, background: '#f3f4f6', borderRadius: 16, border: '1px solid #e5e7eb' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: '#6b7280', textTransform: 'uppercase' }}>{aiResult.type} Result</span>
+                  <button onClick={() => setAiResult(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af' }}><X size={14} /></button>
+                </div>
+                <div style={{ fontSize: 13, lineHeight: 1.6, color: '#111827', whiteSpace: 'pre-wrap' }}>
+                  {aiResult.content}
+                </div>
+              </div>
+            )}
           </div>
 
           {aiSuggestion && (

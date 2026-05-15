@@ -1,5 +1,4 @@
 import { ExternalLink, Heart, Mail, Users, Sparkles } from 'lucide-react';
-import './AboutPage.css';
 
 const AboutPage = () => (
   <div className="about-page">
